@@ -214,6 +214,19 @@ pm2 stop feishu-bridge
 
 ---
 
+### 反馈与问题
+
+遇到问题？欢迎提 issue：
+👉 https://github.com/heran11011/cola-feishu-bridge/issues/new
+
+提交时请附上：
+- 错误日志（终端输出）
+- Node.js 版本（`node -v`）
+- 操作系统
+- 飞书后台配置截图（可选）
+
+---
+
 ## English
 
 ### Introduction
@@ -390,6 +403,19 @@ Proactively send messages to yourself:
 ./feishu-push.sh "Alert: server CPU at 95%"
 ./feishu-push.sh "message content" "ou_xxxxxxxxxxxxxxx"
 ```
+
+---
+
+### Feedback & Issues
+
+Run into problems? Open an issue:
+👉 https://github.com/heran11011/cola-feishu-bridge/issues/new
+
+Please include:
+- Error logs (terminal output)
+- Node.js version (`node -v`)
+- OS
+- Feishu admin console screenshots (optional)
 
 ---
 
