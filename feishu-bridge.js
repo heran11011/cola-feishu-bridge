@@ -1,16 +1,10 @@
 #!/usr/bin/env node
 /**
- * feishu-bridge.js — 飞书 ↔ Cola 桥接服务（长连接版 v2）
+ * feishu-bridge.js (长连接版 v4)
+ * 飞书机器人 ↔ Cola AI 桥接服务
  *
- * 用途：让用户在飞书 App 里直接跟 Cola AI 对话
- * 功能：文本消息 / 图片识别 / 富文本解析 / 图片回复 / 对话历史 / 主动推送
- *
- * 使用前请配置 .env 文件：
- *   FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxxx
- *   FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
- *
- * 启动：node feishu-bridge.js
- * 文档：https://github.com/heran11011/cola-feishu-bridge
+ * 功能：文本消息 + 图片识别 + 富文本回复 + lark-cli 凭证复用 + 权限检测 + 首次提示
+ * 启动: node feishu-bridge.js
  */
 
 'use strict';
@@ -18,7 +12,83 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { execSync } = require('node:child_process');
 const Lark = require('@larksuiteoapi/node-sdk');
+
+// ─── lark-cli 凭证检测 ────────────────────────────────────────────────────────
+
+/**
+ * 尝试从 lark-cli config show --json 读取 appId / appSecret
+ * 返回 { appId, appSecret } 或 null
+ */
+function tryLoadLarkCliConfig() {
+  try {
+    const stdout = execSync('lark-cli config show --json', {
+      timeout: 5000,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (!stdout || !stdout.trim()) return null;
+    const cfg = JSON.parse(stdout.trim());
+    const appId = cfg.appId || cfg.app_id || cfg.AppId;
+    const appSecret = cfg.appSecret || cfg.app_secret || cfg.AppSecret;
+    if (appId && appSecret) return { appId, appSecret };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 尝试从 lark-cli auth status --json 读取已授权的 scope 列表
+ * 返回 string[] 或 null
+ */
+function tryLoadLarkCliScopes() {
+  try {
+    const stdout = execSync('lark-cli auth status --json', {
+      timeout: 5000,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (!stdout || !stdout.trim()) return null;
+    const status = JSON.parse(stdout.trim());
+    // 可能是 { scopes: [...] } 或 { scope: "..." } 或数组
+    if (Array.isArray(status)) return status;
+    if (Array.isArray(status.scopes)) return status.scopes;
+    if (typeof status.scope === 'string') return status.scope.split(/[\s,]+/).filter(Boolean);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 尝试获取 lark-cli 版本号
+ * 返回 "v1.0.5" 形式字符串或 null
+ */
+function tryGetLarkCliVersion() {
+  try {
+    const stdout = execSync('lark-cli --version', {
+      timeout: 5000,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (!stdout) return null;
+    // 匹配类似 "1.0.5" 或 "v1.0.5" 的版本号
+    const m = stdout.match(/v?(\d+\.\d+[\.\d]*)/);
+    return m ? `v${m[1]}` : stdout.trim().slice(0, 20);
+  } catch {
+    return null;
+  }
+}
+
+// 桥接服务需要的权限列表
+const REQUIRED_SCOPES = [
+  'im:message',
+  'im:message:send_as_bot',
+  'im:resource',
+  'im:chat',
+];
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -40,8 +110,20 @@ function loadEnv() {
 
 loadEnv();
 
-const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
-const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
+// 优先尝试 lark-cli 凭证，fallback 到 .env
+const larkCliConfig = tryLoadLarkCliConfig();
+const CRED_SOURCE = larkCliConfig ? 'lark-cli 复用' : '.env 文件';
+
+const FEISHU_APP_ID =
+  (larkCliConfig && larkCliConfig.appId) ||
+  process.env.FEISHU_APP_ID ||
+  'cli_a958938a8b79dbd4';
+
+const FEISHU_APP_SECRET =
+  (larkCliConfig && larkCliConfig.appSecret) ||
+  process.env.FEISHU_APP_SECRET ||
+  '';
+
 const COLA_PORT = parseInt(process.env.COLA_PORT || '19532', 10);
 const COLA_GATEWAY_TOKEN = process.env.COLA_GATEWAY_TOKEN ||
   (() => {
@@ -49,13 +131,12 @@ const COLA_GATEWAY_TOKEN = process.env.COLA_GATEWAY_TOKEN ||
     return fs.existsSync(tokenPath) ? fs.readFileSync(tokenPath, 'utf8').trim() : '';
   })();
 
-if (!FEISHU_APP_ID) {
-  console.error('❌ FEISHU_APP_ID 未配置！请在 .env 文件中设置。');
-  process.exit(1);
-}
+// lark-cli 版本和权限（启动时检测一次）
+const LARK_CLI_VERSION = tryGetLarkCliVersion();
+const LARK_CLI_SCOPES = tryLoadLarkCliScopes();
 
 if (!FEISHU_APP_SECRET) {
-  console.error('❌ FEISHU_APP_SECRET 未配置！请在 .env 文件中设置。');
+  console.error('❌ FEISHU_APP_SECRET 未配置！请在 .env 文件中设置，或先配置 lark-cli（运行 lark-cli config set）。');
   process.exit(1);
 }
 
@@ -69,7 +150,7 @@ if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR, { recursive: true });
 
 // ─── Chat History (持久化上下文) ──────────────────────────────────────────────
 
-const MAX_HISTORY_PER_USER = 50; // 每用户保留最近 50 条
+const MAX_HISTORY_PER_USER = 50; // 每用户保留最近50条
 
 function getHistoryPath(senderId) {
   return path.join(HISTORY_DIR, `${senderId}.json`);
@@ -86,6 +167,7 @@ function loadHistory(senderId) {
 }
 
 function saveHistory(senderId, history) {
+  // 只保留最近 N 条
   const trimmed = history.slice(-MAX_HISTORY_PER_USER);
   fs.writeFileSync(getHistoryPath(senderId), JSON.stringify(trimmed, null, 2));
 }
@@ -98,6 +180,17 @@ function appendToHistory(senderId, role, content) {
     timestamp: new Date().toISOString(),
   });
   saveHistory(senderId, history);
+}
+
+/**
+ * 检查是否是用户的第一次对话（历史记录为空）
+ * 用于决定是否追加首次联动提示
+ */
+function isFirstConversation(senderId) {
+  const history = loadHistory(senderId);
+  // 只统计 user 角色的条目
+  const userMessages = history.filter(h => h.role === 'user');
+  return userMessages.length === 0;
 }
 
 // ─── Dedup cache ─────────────────────────────────────────────────────────────
@@ -136,6 +229,7 @@ function callColaAgent(userMessage, sessionKey, attachments) {
         channel: 'Feishu',
       };
       if (attachments && attachments.length > 0) {
+        // Cola gateway expects attachments as array of file path strings
         params.attachments = attachments.map(a => a.path);
       }
       ws.send(JSON.stringify({
@@ -324,8 +418,7 @@ async function sendTextToUser(openId, text) {
   }
 }
 
-// ─── Push watcher (主动推送) ──────────────────────────────────────────────────
-
+// 导出推送函数，供外部调用
 const PUSH_FILE = path.join(__dirname, 'push-api.json');
 
 // 监听推送请求文件（轮询方式实现主动推送）
@@ -384,6 +477,9 @@ eventDispatcher.register({
       let userText = '';
       let attachments = [];
 
+      // 首次对话标记：在处理消息前记录（此时历史中的 user 条目为 0）
+      const firstConversation = isFirstConversation(senderId);
+
       // ── 处理文本消息 ──
       if (msgType === 'text') {
         try {
@@ -406,7 +502,10 @@ eventDispatcher.register({
           console.log(`[image] Received image: ${imageKey}`);
           const imgPath = await downloadImage(msgId, imageKey);
           if (imgPath) {
-            attachments.push({ path: imgPath, mimeType: 'image/png' });
+            attachments.push({
+              path: imgPath,
+              mimeType: 'image/png',
+            });
             userText = '请看这张图片';
           } else {
             userText = '（用户发了一张图片，但下载失败了）';
@@ -425,6 +524,9 @@ eventDispatcher.register({
           let texts = [];
           let imageKeys = [];
 
+          // post 结构可能是：
+          // 扁平：{ title, content: [[{tag, text/image_key}]] }
+          // 多语言：{ zh_cn: { title, content: [...] } }
           const extractContent = (title, content) => {
             if (title) texts.push(title);
             if (content && Array.isArray(content)) {
@@ -440,8 +542,10 @@ eventDispatcher.register({
           };
 
           if (parsed.content && Array.isArray(parsed.content)) {
+            // 扁平结构
             extractContent(parsed.title, parsed.content);
           } else {
+            // 多语言嵌套结构
             for (const lang of Object.values(parsed)) {
               if (lang && typeof lang === 'object' && lang.content) {
                 extractContent(lang.title, lang.content);
@@ -449,6 +553,7 @@ eventDispatcher.register({
             }
           }
 
+          // 下载 post 里的图片
           for (const imgKey of imageKeys) {
             console.log(`[post] Found image: ${imgKey}`);
             const imgPath = await downloadImage(msgId, imgKey);
@@ -458,7 +563,9 @@ eventDispatcher.register({
           }
 
           userText = texts.join(' ').trim();
-          if (!userText && attachments.length > 0) userText = '请看这张图片';
+          if (!userText && attachments.length > 0) {
+            userText = '请看这张图片';
+          }
           if (attachments.length > 0 && userText && !userText.includes('图片')) {
             userText = userText + '（附带了图片）';
           }
@@ -485,7 +592,7 @@ eventDispatcher.register({
       // 记录用户消息到历史
       appendToHistory(senderId, 'user', userText);
 
-      // 调用 Cola
+      // 调用 Cola（在消息前加飞书标记 + 简洁指令，让 Cola 区分来源并简短回复）
       const prefixedText = `[via Feishu] ${userText}`;
       const reply = await callColaAgent(prefixedText, sessionKey, attachments);
       console.log(`[cola] Reply (${reply.length} chars): ${reply.slice(0, 80)}...`);
@@ -495,12 +602,13 @@ eventDispatcher.register({
         try { fs.unlinkSync(att.path); } catch {}
       }
 
+      // 空响应不回复
       if (!reply || !reply.trim()) {
         console.log('[cola] Empty reply, skip');
         return;
       }
 
-      // 飞书回复长度兜底：超过 500 字截断
+      // 飞书回复长度兜底：超过 500 字截断（飞书聊天窗口不适合长文）
       let trimmedReply = reply;
       if (trimmedReply.length > 500) {
         trimmedReply = trimmedReply.slice(0, 497) + '...';
@@ -508,23 +616,32 @@ eventDispatcher.register({
 
       // 清理 markdown 格式（飞书不渲染 markdown）
       let cleanReply = trimmedReply
-        .replace(/\*\*(.+?)\*\*/g, '$1')
-        .replace(/\*(.+?)\*/g, '$1')
-        .replace(/__(.+?)__/g, '$1')
-        .replace(/_(.+?)_/g, '$1')
-        .replace(/~~(.+?)~~/g, '$1')
-        .replace(/`([^`]+)`/g, '$1')
-        .replace(/```[\s\S]*?```/g, (m) =>
+        .replace(/\*\*(.+?)\*\*/g, '$1')       // **bold** → bold
+        .replace(/\*(.+?)\*/g, '$1')            // *italic* → italic
+        .replace(/__(.+?)__/g, '$1')            // __bold__ → bold
+        .replace(/_(.+?)_/g, '$1')              // _italic_ → italic
+        .replace(/~~(.+?)~~/g, '$1')            // ~~strike~~ → strike
+        .replace(/`([^`]+)`/g, '$1')            // `code` → code
+        .replace(/```[\s\S]*?```/g, (m) =>      // ```block``` → plain
           m.replace(/```\w*\n?/g, '').replace(/```/g, ''))
-        .replace(/^#{1,6}\s+/gm, '')
-        .replace(/^\s*[-*+]\s+/gm, '• ')
-        .replace(/^\s*\d+\.\s+/gm, (m) => m)
-        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1: $2');
+        .replace(/^#{1,6}\s+/gm, '')            // ### heading → heading
+        .replace(/^\s*[-*+]\s+/gm, '• ')        // - list → • list
+        .replace(/^\s*\d+\.\s+/gm, (m) => m)    // keep numbered lists
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1: $2');  // [text](url) → text: url
 
       // 记录 Cola 回复到历史
       appendToHistory(senderId, 'assistant', reply);
 
-      // 检测回复中是否包含本地图片路径
+      // ── 首次对话追加联动提示 ──
+      if (firstConversation) {
+        const hint = LARK_CLI_VERSION
+          ? '\n\n💡 我还能帮你操作飞书——查群消息、管日程、搜文档，直接跟我说就行。'
+          : '\n\n💡 我还能帮你操作飞书——查群消息、管日程、搜文档，直接跟我说就行。（需要安装 cola-lark-skills）';
+        cleanReply = cleanReply + hint;
+        console.log(`[hint] 首次对话，追加联动提示（lark-cli: ${LARK_CLI_VERSION || '未安装'}）`);
+      }
+
+      // 检测回复中是否包含本地图片路径（Cola 生成图片后会返回路径）
       const imgPathRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp))/gi;
       const imgMatches = cleanReply.match(imgPathRegex) || [];
       const validImgPaths = imgMatches.filter(p => fs.existsSync(p));
@@ -560,19 +677,83 @@ eventDispatcher.register({
   },
 });
 
-// ─── Start ────────────────────────────────────────────────────────────────────
+// ─── Start Banner ─────────────────────────────────────────────────────────────
 
-console.log(`
-╔══════════════════════════════════════════════════╗
-║     飞书 ↔ Cola 桥接服务（长连接版 v2）           ║
-╚══════════════════════════════════════════════════╝
-  App ID:     ${FEISHU_APP_ID}
-  App Secret: ✓ 已配置
-  Cola Token: ${COLA_GATEWAY_TOKEN ? '✓ 已配置' : '✗ 未找到（Cola 是否在运行？）'}
-  支持:       文本 / 图片 / 富文本
+function buildStartBanner() {
+  const lines = [];
+  const W = 52; // 内容宽度
 
-  正在连接飞书服务器...
-`);
+  const pad = (s) => {
+    // 给每行右侧补空格，对齐右边框
+    // 粗略计算：中文字符占2列，其余占1列
+    let visual = 0;
+    for (const ch of s) {
+      visual += /[\u4e00-\u9fff\uff00-\uffef\u3000-\u303f]/.test(ch) ? 2 : 1;
+    }
+    const pad = W - visual;
+    return s + (pad > 0 ? ' '.repeat(pad) : '');
+  };
+
+  lines.push('╔' + '═'.repeat(W) + '╗');
+  lines.push('║' + pad('     飞书 ↔ Cola 桥接服务 v4') + '║');
+  lines.push('╚' + '═'.repeat(W) + '╝');
+  lines.push('');
+
+  // 凭证来源
+  lines.push(`  凭证来源:   ${CRED_SOURCE}`);
+
+  // App ID（截断显示）
+  const appIdDisplay = FEISHU_APP_ID.length > 30
+    ? FEISHU_APP_ID.slice(0, 27) + '...'
+    : FEISHU_APP_ID;
+  lines.push(`  App ID:     ${appIdDisplay}`);
+
+  // App Secret（不显示值，只显示是否已配置）
+  lines.push(`  App Secret: ${FEISHU_APP_SECRET ? '✓ 已配置' : '✗ 未配置'}`);
+
+  // Cola Token
+  lines.push(`  Cola Token: ${COLA_GATEWAY_TOKEN ? '✓ 已配置' : '✗ 未找到'}`);
+
+  lines.push('');
+
+  // lark-cli 状态
+  if (LARK_CLI_VERSION) {
+    lines.push(`  lark-cli:   ✓ ${LARK_CLI_VERSION}（飞书操作能力可用）`);
+  } else {
+    lines.push(`  lark-cli:   ✗ 未安装`);
+  }
+
+  // 权限检测
+  if (LARK_CLI_SCOPES !== null) {
+    const scopeChecks = REQUIRED_SCOPES.map(scope => {
+      const ok = LARK_CLI_SCOPES.some(s => s === scope || s.startsWith(scope));
+      return `${ok ? '✓' : '✗'} ${scope}`;
+    });
+    lines.push(`  权限检测:   ${scopeChecks.join(' / ')}`);
+
+    // 缺失权限提示
+    const missingScopes = REQUIRED_SCOPES.filter(scope =>
+      !LARK_CLI_SCOPES.some(s => s === scope || s.startsWith(scope))
+    );
+    if (missingScopes.length > 0) {
+      lines.push('');
+      lines.push(`  ⚠️  缺少权限: ${missingScopes.join(', ')}`);
+      lines.push(`      运行: lark-cli auth login --scope ${missingScopes.join(',')} 补充`);
+    }
+  } else {
+    lines.push(`  权限检测:   — (lark-cli 未安装或未授权，跳过)`);
+  }
+
+  lines.push('');
+  lines.push('  支持:       文本 / 图片 / 富文本 / 主动推送');
+  lines.push('');
+  lines.push('  正在连接飞书服务器...');
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+console.log(buildStartBanner());
 
 wsClient.start({ eventDispatcher })
   .then(() => {
