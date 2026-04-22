@@ -755,15 +755,53 @@ function buildStartBanner() {
 
 console.log(buildStartBanner());
 
-wsClient.start({ eventDispatcher })
-  .then(() => {
-    console.log('✅ 长连接已建立，等待消息中...');
+// ─── 静默重连逻辑 ─────────────────────────────────────────────────────────────
+
+let isConnected = false;
+let reconnectTimer = null;
+const RECONNECT_INTERVAL = 15000; // 15秒重试一次
+
+async function connectWithRetry() {
+  try {
+    await wsClient.start({ eventDispatcher });
+    if (!isConnected) {
+      console.log('✅ 长连接已建立，等待消息中...');
+      isConnected = true;
+    } else {
+      console.log('✅ 重连成功');
+    }
     startPushWatcher();
-  })
-  .catch((err) => {
-    console.error('❌ 长连接启动失败:', err.message);
-    process.exit(1);
-  });
+    // 清除重连定时器
+    if (reconnectTimer) {
+      clearInterval(reconnectTimer);
+      reconnectTimer = null;
+    }
+  } catch (err) {
+    if (!isConnected) {
+      // 首次连接失败，提示一次
+      console.error(`⚠️ 连接失败（${err.message}），将在后台自动重试...`);
+    }
+    // 静默重试，不再刷屏
+    if (!reconnectTimer) {
+      reconnectTimer = setInterval(async () => {
+        try {
+          await wsClient.start({ eventDispatcher });
+          console.log('✅ 重连成功');
+          isConnected = true;
+          startPushWatcher();
+          if (reconnectTimer) {
+            clearInterval(reconnectTimer);
+            reconnectTimer = null;
+          }
+        } catch {
+          // 静默，不输出
+        }
+      }, RECONNECT_INTERVAL);
+    }
+  }
+}
+
+connectWithRetry();
 
 process.on('SIGINT', () => { console.log('\n🛑 正在关闭...'); process.exit(0); });
 process.on('SIGTERM', () => { console.log('\n🛑 正在关闭...'); process.exit(0); });
