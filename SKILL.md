@@ -209,11 +209,41 @@ pm2 startup
 在安装或使用过程中遇到问题时：
 
 1. 先尝试根据错误信息自行排查（检查 `.env` 配置、Node 版本、飞书后台权限和事件回调设置）
-2. 如果你无法自动修复，告诉用户：
+2. 如果你无法自动修复，帮用户提交 issue 反馈：
 
-> 这个问题我暂时无法自动解决。我帮你整理好了反馈内容，你可以在这里提交 issue：
+### 提交 issue 流程（优先自动提交）
+
+**Step 1: 检查 gh CLI 登录态**
+
+```bash
+gh auth status
+```
+
+**Step 2a: 如果已登录 GitHub → 直接帮用户提 issue**
+
+整理好以下信息，展示给用户确认：
+- 标题：简明描述问题
+- 内容：错误日志、Node.js 版本（`node -v`）、操作系统、问题复现步骤
+
+用户确认后，执行：
+
+```bash
+gh issue create --repo heran11011/cola-feishu-bridge \
+  --title "问题标题" \
+  --body "整理好的问题描述"
+```
+
+告诉用户：
+> ✅ 已帮你提交 issue，开发者会收到通知并尽快处理。
+
+**Step 2b: 如果未登录 GitHub → 给链接**
+
+告诉用户：
+> 你的电脑还没有登录 GitHub CLI，我没办法直接帮你提交。
+> 你可以手动在这里提 issue：
 > https://github.com/heran11011/cola-feishu-bridge/issues/new
-> 开发者看到后会尽快处理。
+>
+> 或者先登录 GitHub CLI（`gh auth login`），下次我就能直接帮你提交了。
 
 提交 issue 时，引导用户附上：
 - 错误日志（终端输出）
