@@ -419,6 +419,15 @@ Please include:
 
 ---
 
+### 相关项目 / Related Projects
+
+| 项目 | 说明 |
+|------|------|
+| [cola-lark-skills](https://github.com/heran11011/cola-lark-skills) | Cola 连接飞书帮你干活（Cola → 飞书） |
+| [cola-feishu-bridge](https://github.com/heran11011/cola-feishu-bridge)（本仓库） | 在飞书中直接跟 Cola 对话（飞书 → Cola） |
+
+---
+
 ## License
 
 MIT
