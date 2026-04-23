@@ -298,8 +298,9 @@ function callColaAgent(userMessage, sessionKey, attachments) {
       if (data.type === 'event' && data.event === 'agent:complete') {
         clearTimeout(timeout);
         ws.close();
-        const text = data.data?.finalText || '';
-        // 从 finalText 里提取文件路径
+        const text = data.data?.finalText || data.data?.output || '';
+        console.log(`[cola:complete] text=${text.length} chars, collectedFiles=${collectedFiles.length}`);
+        // 从回复文本里提取文件路径
         const textFileRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp|mp3|wav|ogg|m4a|mp4|pdf))/gi;
         const textMatches = text.match(textFileRegex) || [];
         for (const m of textMatches) {
