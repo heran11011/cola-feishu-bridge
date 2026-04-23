@@ -214,13 +214,14 @@ function isNewMessage(msgId) {
 function callColaAgent(userMessage, sessionKey, attachments) {
   return new Promise((resolve, reject) => {
     if (!COLA_GATEWAY_TOKEN) {
-      return resolve(`[Echo] ${userMessage}`);
+      return resolve({ text: `[Echo] ${userMessage}`, files: [] });
     }
 
     const url = `ws://127.0.0.1:${COLA_PORT}?token=${COLA_GATEWAY_TOKEN}`;
     const ws = new WebSocket(url);
     const reqId = `feishu-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     let timeout;
+    const collectedFiles = []; // 收集中间事件里的文件路径
 
     ws.addEventListener('open', () => {
       const params = {
@@ -229,7 +230,6 @@ function callColaAgent(userMessage, sessionKey, attachments) {
         channel: 'Feishu',
       };
       if (attachments && attachments.length > 0) {
-        // Cola gateway expects attachments as array of file path strings
         params.attachments = attachments.map(a => a.path);
       }
       ws.send(JSON.stringify({
@@ -244,10 +244,41 @@ function callColaAgent(userMessage, sessionKey, attachments) {
       let data;
       try { data = JSON.parse(event.data); } catch { return; }
 
+      // 捕获 desktop:file 事件（send_file 产生的）
+      if (data.type === 'event' && data.event === 'desktop:file') {
+        const filePath = data.data?.path || data.data?.filePath;
+        if (filePath) {
+          console.log(`[cola:file] Captured file event: ${filePath}`);
+          collectedFiles.push(filePath);
+        }
+      }
+
+      // 兜底：从所有事件 data 里扫描图片路径
+      if (data.type === 'event' && data.data) {
+        const raw = JSON.stringify(data.data);
+        const fileRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp))/gi;
+        const matches = raw.match(fileRegex) || [];
+        for (const m of matches) {
+          if (!collectedFiles.includes(m) && fs.existsSync(m)) {
+            console.log(`[cola:file] Captured file from event data: ${m}`);
+            collectedFiles.push(m);
+          }
+        }
+      }
+
       if (data.type === 'event' && data.event === 'agent:complete') {
         clearTimeout(timeout);
         ws.close();
-        resolve(data.data?.finalText || '');
+        const text = data.data?.finalText || '';
+        // 也从 finalText 里提取图片路径
+        const textFileRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp))/gi;
+        const textMatches = text.match(textFileRegex) || [];
+        for (const m of textMatches) {
+          if (!collectedFiles.includes(m) && fs.existsSync(m)) {
+            collectedFiles.push(m);
+          }
+        }
+        resolve({ text, files: collectedFiles });
       }
 
       if (data.type === 'response' && data.ok === false) {
@@ -594,16 +625,21 @@ eventDispatcher.register({
 
       // 调用 Cola（在消息前加飞书标记 + 简洁指令，让 Cola 区分来源并简短回复）
       const prefixedText = `[via Feishu] ${userText}`;
-      const reply = await callColaAgent(prefixedText, sessionKey, attachments);
-      console.log(`[cola] Reply (${reply.length} chars): ${reply.slice(0, 80)}...`);
+      const colaResult = await callColaAgent(prefixedText, sessionKey, attachments);
+      const reply = colaResult.text || '';
+      const eventFiles = colaResult.files || [];
+      console.log(`[cola] Reply (${reply.length} chars, ${eventFiles.length} files): ${reply.slice(0, 80)}...`);
+      if (eventFiles.length > 0) {
+        console.log(`[cola:files] Collected from events: ${eventFiles.join(', ')}`);
+      }
 
       // 清理临时图片
       for (const att of attachments) {
         try { fs.unlinkSync(att.path); } catch {}
       }
 
-      // 空响应不回复
-      if (!reply || !reply.trim()) {
+      // 空响应不回复（但如果有文件还是要发）
+      if ((!reply || !reply.trim()) && eventFiles.length === 0) {
         console.log('[cola] Empty reply, skip');
         return;
       }
@@ -641,16 +677,33 @@ eventDispatcher.register({
         console.log(`[hint] 首次对话，追加联动提示（lark-cli: ${LARK_CLI_VERSION || '未安装'}）`);
       }
 
-      // 检测回复中是否包含本地图片路径（Cola 生成图片后会返回路径）
+      // 合并图片来源：1) 从事件流收集的文件 2) 从回复文本里正则匹配的路径
       const imgPathRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp))/gi;
       const imgMatches = cleanReply.match(imgPathRegex) || [];
-      const validImgPaths = imgMatches.filter(p => fs.existsSync(p));
+      const textImgPaths = imgMatches.filter(p => fs.existsSync(p));
 
-      // 回复文字
-      await replyText(msgId, cleanReply);
-      console.log(`[feishu] Replied text to ${senderId}`);
+      // 合并去重
+      const allImgPaths = [...eventFiles];
+      for (const p of textImgPaths) {
+        if (!allImgPaths.includes(p)) allImgPaths.push(p);
+      }
+      const validImgPaths = allImgPaths.filter(p => /\.(png|jpg|jpeg|gif|webp)$/i.test(p) && fs.existsSync(p));
 
-      // 如果有图片，逐个上传发送
+      if (validImgPaths.length > 0) {
+        console.log(`[feishu] Will send ${validImgPaths.length} image(s): ${validImgPaths.join(', ')}`);
+        // 从文字回复里移除图片路径
+        for (const imgPath of validImgPaths) {
+          cleanReply = cleanReply.replace(imgPath, '').trim();
+        }
+      }
+
+      // 回复文字（如果清理后还有内容）
+      if (cleanReply && cleanReply.trim()) {
+        await replyText(msgId, cleanReply);
+        console.log(`[feishu] Replied text to ${senderId}`);
+      }
+
+      // 发送图片
       for (const imgPath of validImgPaths) {
         try {
           const imageKey = await uploadImageToFeishu(imgPath);
