@@ -331,11 +331,11 @@ function callColaAgent(userMessage, sessionKey, attachments) {
       reject(new Error(`Cola WebSocket error: ${e.message || 'unknown'}`));
     });
 
-    // 3 minute timeout
+    // 5 minute timeout（生成图片/音频等可能需要较长时间）
     timeout = setTimeout(() => {
       ws.close();
-      reject(new Error('Cola response timeout (180s)'));
-    }, 180000);
+      reject(new Error('Cola response timeout (300s)'));
+    }, 300000);
   });
 }
 
