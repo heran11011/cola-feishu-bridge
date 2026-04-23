@@ -268,8 +268,13 @@ function callColaAgent(userMessage, sessionKey, attachments) {
       let data;
       try { data = JSON.parse(event.data); } catch { return; }
 
-      // 调试：记录所有事件类型
-      if (data.type === 'event') {
+      // 调试：记录 RPC response
+      if (data.type === 'response') {
+        console.log(`[ws:response] id=${data.id} ok=${data.ok} error=${data.error || ''} keys=${Object.keys(data.data || data.result || {}).join(',')}`);
+      }
+
+      // 调试：记录非 log:line 事件
+      if (data.type === 'event' && data.event !== 'log:line') {
         console.log(`[ws:event] ${data.event || 'unknown'} keys=${Object.keys(data.data || {}).join(',')}`);
       }
 
@@ -308,12 +313,19 @@ function callColaAgent(userMessage, sessionKey, attachments) {
             collectedFiles.push(m);
           }
         }
-        // 终极兜底：扫描 outputs 目录中新产生的媒体文件
-        const newMediaFiles = scanNewMediaFiles(beforeCallMs);
+        // 终极兜底：扫描 outputs 目录中本次调用期间新产生的媒体文件
+        // 只扫描 beforeCallMs 之后创建的，且排除已经在 collectedFiles 里的
+        const newMediaFiles = scanNewMediaFiles(beforeCallMs - 2000); // 留2秒容差
         for (const f of newMediaFiles) {
           if (!collectedFiles.includes(f)) {
-            console.log(`[cola:file] Found new media in outputs: ${f}`);
-            collectedFiles.push(f);
+            // 额外确认文件确实是在本次调用期间创建的（不是之前残留的）
+            try {
+              const stat = fs.statSync(f);
+              if (stat.mtimeMs >= beforeCallMs - 2000) {
+                console.log(`[cola:file] Found new media in outputs: ${f}`);
+                collectedFiles.push(f);
+              }
+            } catch {}
           }
         }
         resolve({ text, files: collectedFiles });
@@ -410,6 +422,11 @@ async function downloadImage(messageId, imageKey) {
 // ─── Reply helpers ────────────────────────────────────────────────────────────
 
 async function replyText(msgId, text) {
+  // 跳过空消息，避免飞书显示 [NO_MSG]
+  if (!text || !text.trim() || text.trim().length < 2) {
+    console.log('[replyText] Skipped empty or too-short message');
+    return;
+  }
   await client.im.message.reply({
     path: { message_id: msgId },
     data: {
