@@ -2,9 +2,9 @@
 
 ## 用途 / Purpose
 
-帮用户安装「飞书桥接服务」——一个让用户在飞书 App 里直接跟 Cola 对话的桥接程序。
+帮用户安装「飞书桥接服务」——一个让用户在飞书 App 里直接跟 Cola 对话的桥接程序。Cola 的回复（文字、图片、音频、PDF 等文件）都会自动发回飞书。
 
-This skill guides the user through installing the Feishu Bridge service, which allows them to chat with Cola directly inside the Feishu (Lark) app.
+This skill guides the user through installing the Feishu Bridge service, which allows them to chat with Cola directly inside the Feishu (Lark) app. Cola's responses (text, images, audio, PDFs, and other files) are automatically sent back to Feishu.
 
 ---
 
@@ -252,6 +252,7 @@ pm2 startup
 | 收到消息但没回复 | 权限不够 | 飞书后台检查 4 个权限是否全开 |
 | 图片发不出去 | im:resource 没开 | 飞书后台权限管理里开启 |
 | 事件回调连不上 | 选了 HTTP 模式 | 飞书后台事件与回调 → 改为长连接 |
+| 图片/音频没发到飞书 | im:resource 权限未开或 Cola 没在运行 | 飞书后台权限管理确认 `im:resource` 已开启 + 确认 Cola 正在运行 |
 
 ---
 

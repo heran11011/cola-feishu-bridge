@@ -1,6 +1,6 @@
 # Cola Feishu Bridge — 飞书桥接
 
-> v1.0.0
+> v1.1.0
 
 [English](#english) | [中文](#中文)
 
@@ -30,6 +30,8 @@ Cola 的全部能力（写代码、查资料、分析图片、生成内容……
 - 💬 **文字对话**：直接在飞书单聊窗口跟 Cola 聊天
 - 🖼️ **图片识别**：发图片给 Cola，它能看懂并回复
 - 📤 **图片回复**：Cola 生成的图片会直接发回到飞书
+- 🎵 **音频回复**：Cola 生成的音频（播客、TTS等）直接发回飞书
+- 📎 **文件回复**：PDF 等文件自动发回飞书
 - 🧠 **对话记忆**：每个用户独立的对话历史，上下文连贯
 - 📡 **主动推送**：通过 `feishu-push.sh` 让 Cola 主动给你发消息
 
@@ -162,7 +164,7 @@ npm start
 
 ```
 ╔══════════════════════════════════════════════════╗
-║     飞书 ↔ Cola 桥接服务（长连接版 v2）           ║
+║     飞书 ↔ Cola 桥接服务（长连接版 v4）           ║
 ╚══════════════════════════════════════════════════╝
   App ID:     cli_xxx...
   App Secret: ✓ 已配置
@@ -251,6 +253,8 @@ Both can be installed simultaneously without conflict.
 - 💬 **Text chat**: Talk to Cola in Feishu DMs
 - 🖼️ **Image understanding**: Send images, Cola can see and respond
 - 📤 **Image replies**: Cola's generated images are sent back to Feishu
+- 🎵 **Audio replies**: Cola's generated audio (podcasts, TTS, etc.) sent back to Feishu
+- 📎 **File replies**: PDFs and other files automatically sent back to Feishu
 - 🧠 **Conversation memory**: Per-user chat history with persistent context
 - 📡 **Push messages**: Proactively send messages to yourself via `feishu-push.sh`
 
