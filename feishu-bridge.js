@@ -211,7 +211,31 @@ function isNewMessage(msgId) {
 
 // ─── Cola WebSocket ───────────────────────────────────────────────────────────
 
+// 扫描 outputs 目录中在指定时间之后创建的图片/音频文件
+const OUTPUTS_DIR = path.join(os.homedir(), '.cola', 'outputs');
+const MEDIA_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.pdf']);
+
+function scanNewMediaFiles(sinceMs) {
+  const results = [];
+  try {
+    const entries = fs.readdirSync(OUTPUTS_DIR);
+    for (const entry of entries) {
+      const fullPath = path.join(OUTPUTS_DIR, entry);
+      const ext = path.extname(entry).toLowerCase();
+      if (!MEDIA_EXTENSIONS.has(ext)) continue;
+      try {
+        const stat = fs.statSync(fullPath);
+        if (stat.isFile() && stat.mtimeMs >= sinceMs) {
+          results.push(fullPath);
+        }
+      } catch {}
+    }
+  } catch {}
+  return results;
+}
+
 function callColaAgent(userMessage, sessionKey, attachments) {
+  const beforeCallMs = Date.now();
   return new Promise((resolve, reject) => {
     if (!COLA_GATEWAY_TOKEN) {
       return resolve({ text: `[Echo] ${userMessage}`, files: [] });
@@ -244,6 +268,11 @@ function callColaAgent(userMessage, sessionKey, attachments) {
       let data;
       try { data = JSON.parse(event.data); } catch { return; }
 
+      // 调试：记录所有事件类型
+      if (data.type === 'event') {
+        console.log(`[ws:event] ${data.event || 'unknown'} keys=${Object.keys(data.data || {}).join(',')}`);
+      }
+
       // 捕获 desktop:file 事件（send_file 产生的）
       if (data.type === 'event' && data.event === 'desktop:file') {
         const filePath = data.data?.path || data.data?.filePath;
@@ -253,10 +282,10 @@ function callColaAgent(userMessage, sessionKey, attachments) {
         }
       }
 
-      // 兜底：从所有事件 data 里扫描图片路径
+      // 兜底：从所有事件 data 里扫描图片/音频路径
       if (data.type === 'event' && data.data) {
         const raw = JSON.stringify(data.data);
-        const fileRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp))/gi;
+        const fileRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp|mp3|wav|ogg|m4a|mp4|pdf))/gi;
         const matches = raw.match(fileRegex) || [];
         for (const m of matches) {
           if (!collectedFiles.includes(m) && fs.existsSync(m)) {
@@ -270,12 +299,20 @@ function callColaAgent(userMessage, sessionKey, attachments) {
         clearTimeout(timeout);
         ws.close();
         const text = data.data?.finalText || '';
-        // 也从 finalText 里提取图片路径
-        const textFileRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp))/gi;
+        // 从 finalText 里提取文件路径
+        const textFileRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp|mp3|wav|ogg|m4a|mp4|pdf))/gi;
         const textMatches = text.match(textFileRegex) || [];
         for (const m of textMatches) {
           if (!collectedFiles.includes(m) && fs.existsSync(m)) {
             collectedFiles.push(m);
+          }
+        }
+        // 终极兜底：扫描 outputs 目录中新产生的媒体文件
+        const newMediaFiles = scanNewMediaFiles(beforeCallMs);
+        for (const f of newMediaFiles) {
+          if (!collectedFiles.includes(f)) {
+            console.log(`[cola:file] Found new media in outputs: ${f}`);
+            collectedFiles.push(f);
           }
         }
         resolve({ text, files: collectedFiles });
@@ -416,6 +453,64 @@ async function replyImage(msgId, imageKey) {
     data: {
       msg_type: 'image',
       content: JSON.stringify({ image_key: imageKey }),
+    },
+  });
+}
+
+// 上传文件到飞书（音频、PDF 等）并返回 file_key
+async function uploadFileToFeishu(filePath, fileType = 'stream') {
+  try {
+    const token = await getTenantToken();
+    const formData = new FormData();
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    // 飞书 file_type: opus/mp4/pdf/doc/xls/ppt/stream
+    const typeMap = { '.mp3': 'stream', '.wav': 'stream', '.ogg': 'opus', '.m4a': 'mp4', '.mp4': 'mp4', '.pdf': 'pdf' };
+    const feishuType = typeMap[ext] || fileType;
+
+    formData.append('file_type', feishuType);
+    formData.append('file_name', fileName);
+    const fileBuffer = fs.readFileSync(filePath);
+    const blob = new Blob([fileBuffer]);
+    formData.append('file', blob, fileName);
+
+    const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/files', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: formData,
+    });
+    const data = await resp.json();
+    if (data.code === 0 && data.data?.file_key) {
+      console.log(`[file] Uploaded to Feishu: ${data.data.file_key} (${fileName})`);
+      return data.data.file_key;
+    }
+    console.error('[file] Upload failed:', JSON.stringify(data).slice(0, 200));
+    return null;
+  } catch (err) {
+    console.error('[file] Upload error:', err.message);
+    return null;
+  }
+}
+
+// 回复文件消息
+async function replyFile(msgId, fileKey) {
+  await client.im.message.reply({
+    path: { message_id: msgId },
+    data: {
+      msg_type: 'file',
+      content: JSON.stringify({ file_key: fileKey }),
+    },
+  });
+}
+
+// 回复音频消息
+async function replyAudio(msgId, fileKey) {
+  await client.im.message.reply({
+    path: { message_id: msgId },
+    data: {
+      msg_type: 'audio',
+      content: JSON.stringify({ file_key: fileKey }),
     },
   });
 }
@@ -677,23 +772,30 @@ eventDispatcher.register({
         console.log(`[hint] 首次对话，追加联动提示（lark-cli: ${LARK_CLI_VERSION || '未安装'}）`);
       }
 
-      // 合并图片来源：1) 从事件流收集的文件 2) 从回复文本里正则匹配的路径
-      const imgPathRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp))/gi;
-      const imgMatches = cleanReply.match(imgPathRegex) || [];
-      const textImgPaths = imgMatches.filter(p => fs.existsSync(p));
+      // 合并媒体文件来源：1) 从事件流收集的文件 2) 从回复文本里正则匹配的路径
+      const mediaPathRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp|mp3|wav|ogg|m4a|mp4|pdf))/gi;
+      const mediaMatches = cleanReply.match(mediaPathRegex) || [];
+      const textMediaPaths = mediaMatches.filter(p => fs.existsSync(p));
 
       // 合并去重
-      const allImgPaths = [...eventFiles];
-      for (const p of textImgPaths) {
-        if (!allImgPaths.includes(p)) allImgPaths.push(p);
+      const allMediaPaths = [...eventFiles];
+      for (const p of textMediaPaths) {
+        if (!allMediaPaths.includes(p)) allMediaPaths.push(p);
       }
-      const validImgPaths = allImgPaths.filter(p => /\.(png|jpg|jpeg|gif|webp)$/i.test(p) && fs.existsSync(p));
+      const validMediaPaths = allMediaPaths.filter(p => fs.existsSync(p));
 
-      if (validImgPaths.length > 0) {
-        console.log(`[feishu] Will send ${validImgPaths.length} image(s): ${validImgPaths.join(', ')}`);
-        // 从文字回复里移除图片路径
-        for (const imgPath of validImgPaths) {
-          cleanReply = cleanReply.replace(imgPath, '').trim();
+      // 分类：图片 vs 音频 vs 其他文件
+      const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+      const AUDIO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.m4a']);
+      const imagePaths = validMediaPaths.filter(p => IMAGE_EXTS.has(path.extname(p).toLowerCase()));
+      const audioPaths = validMediaPaths.filter(p => AUDIO_EXTS.has(path.extname(p).toLowerCase()));
+      const otherPaths = validMediaPaths.filter(p => !IMAGE_EXTS.has(path.extname(p).toLowerCase()) && !AUDIO_EXTS.has(path.extname(p).toLowerCase()));
+
+      if (validMediaPaths.length > 0) {
+        console.log(`[feishu] Will send ${imagePaths.length} image(s), ${audioPaths.length} audio(s), ${otherPaths.length} file(s)`);
+        // 从文字回复里移除文件路径
+        for (const mediaPath of validMediaPaths) {
+          cleanReply = cleanReply.replace(mediaPath, '').trim();
         }
       }
 
@@ -704,7 +806,7 @@ eventDispatcher.register({
       }
 
       // 发送图片
-      for (const imgPath of validImgPaths) {
+      for (const imgPath of imagePaths) {
         try {
           const imageKey = await uploadImageToFeishu(imgPath);
           if (imageKey) {
@@ -713,6 +815,32 @@ eventDispatcher.register({
           }
         } catch (imgErr) {
           console.error(`[feishu] Image reply failed: ${imgErr.message}`);
+        }
+      }
+
+      // 发送音频
+      for (const audioPath of audioPaths) {
+        try {
+          const fileKey = await uploadFileToFeishu(audioPath);
+          if (fileKey) {
+            await replyFile(msgId, fileKey);
+            console.log(`[feishu] Replied audio to ${senderId}: ${audioPath}`);
+          }
+        } catch (audioErr) {
+          console.error(`[feishu] Audio reply failed: ${audioErr.message}`);
+        }
+      }
+
+      // 发送其他文件（PDF 等）
+      for (const filePath of otherPaths) {
+        try {
+          const fileKey = await uploadFileToFeishu(filePath);
+          if (fileKey) {
+            await replyFile(msgId, fileKey);
+            console.log(`[feishu] Replied file to ${senderId}: ${filePath}`);
+          }
+        } catch (fileErr) {
+          console.error(`[feishu] File reply failed: ${fileErr.message}`);
         }
       }
 
