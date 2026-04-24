@@ -48,6 +48,13 @@ Cola 的全部能力（写代码、查资料、分析图片、生成内容……
 - [Node.js](https://nodejs.org) >= 22.0.0
 - 一个飞书企业自建应用（下面有详细步骤）
 
+> 💡 **强烈建议使用个人版飞书（个人企业）来创建应用。** 不要在公司正式企业中创建，原因：
+> 1. 公司企业中创建应用需要管理员审批，流程长
+> 2. 机器人会出现在公司通讯录中，其他同事可能误触发
+> 3. Cola 拥有本地文件读写等能力，在公司环境中暴露有安全风险
+> 
+> 注册个人版飞书很简单，用手机号注册即可，免费，自己就是管理员，审批秒过。
+
 ---
 
 ### 安装步骤
@@ -307,6 +314,13 @@ Both can be installed simultaneously without conflict.
 - [Cola](https://cola.dev) installed and running
 - [Node.js](https://nodejs.org) >= 22.0.0
 - A Feishu self-built enterprise app (detailed steps below)
+
+> 💡 **Strongly recommended: use a personal Feishu account (personal organization) to create the app.** Do not create it in your company's official organization:
+> 1. Company apps require admin approval, which can be slow
+> 2. The bot will appear in the company directory — coworkers may accidentally trigger it
+> 3. Cola has local file system access — exposing it in a corporate environment is a security risk
+> 
+> Signing up for a personal Feishu account is free and takes 1 minute. You'll be the admin, so app approval is instant.
 
 ---
 
