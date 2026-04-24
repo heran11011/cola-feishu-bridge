@@ -238,6 +238,7 @@ pm2 stop feishu-bridge
 - `.env` 文件包含你的飞书 App Secret，**绝对不要提交到 git 或分享给任何人**
 - 项目已配置 `.gitignore` 保护 `.env`，但请自行确认生效
 - 建议将 `.env` 文件权限设置为 `chmod 600 .env`（仅本人可读）
+- Cola Gateway Token 存储在 `~/.cola/gateway-token`，同样建议 `chmod 600 ~/.cola/gateway-token`，防止其他用户读取
 
 **👤 访问控制**
 - 默认情况下，**任何能找到你飞书机器人的用户都可以通过它触发 Cola**
@@ -255,7 +256,10 @@ pm2 stop feishu-bridge
 
 **📁 文件安全**
 - 桥接服务只允许读取 Cola 输出目录和临时图片目录内的文件
-- `chat_history/` 目录保存对话历史，包含你与 Cola 的所有对话内容，请注意保护
+- `chat_history/` 目录保存对话历史，包含你与 Cola 的**所有对话内容（明文 JSON）**，请注意保护：
+  - 建议 `chmod 700 chat_history/`
+  - 不要将此目录同步到云盘或分享给他人
+  - 如需清理历史记录，直接删除对应的 `.json` 文件即可
 
 **🔄 依赖安全**
 - 请定期运行 `npm audit` 检查依赖漏洞
@@ -264,6 +268,11 @@ pm2 stop feishu-bridge
 **🌐 网络**
 - 桥接服务通过飞书 SDK 的长连接与飞书服务器通信，不需要公网 IP
 - Cola 的 WebSocket 连接仅限本地 `127.0.0.1`，不暴露到外网
+
+**📝 日志安全**
+- 如果使用 PM2 后台运行，PM2 的日志文件（`~/.pm2/logs/`）可能包含对话内容
+- 建议定期清理日志：`pm2 flush feishu-bridge`
+- 或限制日志大小：`pm2 install pm2-logrotate`
 
 ---
 
@@ -476,6 +485,7 @@ This is a **local bridge service** connecting your Feishu and local Cola. Please
 - `.env` contains your Feishu App Secret — **never commit it to git or share it**
 - `.gitignore` is configured to protect `.env`, but please verify it works
 - Recommended: `chmod 600 .env` (owner read-only)
+- Cola Gateway Token is stored at `~/.cola/gateway-token` — also recommended: `chmod 600 ~/.cola/gateway-token`
 
 **👤 Access Control**
 - By default, **anyone who can find your Feishu bot can trigger your local Cola**
@@ -493,7 +503,10 @@ This is a **local bridge service** connecting your Feishu and local Cola. Please
 
 **📁 File Safety**
 - The bridge only allows reading files from Cola's output directory and temp image directory
-- `chat_history/` contains all your conversation data — keep it protected
+- `chat_history/` stores all your conversations in **plain-text JSON** — protect it carefully:
+  - Recommended: `chmod 700 chat_history/`
+  - Do not sync this directory to cloud storage or share it
+  - To clear history, simply delete the corresponding `.json` files
 
 **🔄 Dependencies**
 - Run `npm audit` regularly to check for known vulnerabilities
@@ -502,6 +515,11 @@ This is a **local bridge service** connecting your Feishu and local Cola. Please
 **🌐 Network**
 - The bridge communicates with Feishu via SDK persistent connection — no public IP needed
 - Cola's WebSocket is local-only (`127.0.0.1`), not exposed to the internet
+
+**📝 Log Safety**
+- If using PM2, log files (`~/.pm2/logs/`) may contain conversation content
+- Clean logs regularly: `pm2 flush feishu-bridge`
+- Or limit log size: `pm2 install pm2-logrotate`
 
 ---
 
