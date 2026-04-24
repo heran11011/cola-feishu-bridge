@@ -137,7 +137,7 @@ cd cola-feishu-bridge
 左侧菜单 → 「**版本管理与发布**」。
 
 1. 点击「创建版本」
-2. 版本号随意（如 `1.0.0`），可用性选「所有成员可用」
+2. 版本号随意（如 `1.0.0`），可用性选「**仅自己可用**」或「指定成员」（⚠️ 不要选"所有成员可用"，否则企业内所有人都能触发你的 Cola）
 3. 点击「保存」
 4. 点击「申请发布」
 
@@ -407,7 +407,7 @@ Under "Event Configuration", add event: search `im.message.receive_v1` and click
 Left menu → **"Version management"**.
 
 1. Click "Create version"
-2. Set version number (e.g. `1.0.0`), availability: "All members"
+2. Set version number (e.g. `1.0.0`), availability: "**Only me**" or "Specified members" (⚠️ Do NOT select "All members" — this would expose your Cola to everyone in the organization)
 3. Save
 4. Click "Apply for release"
 
