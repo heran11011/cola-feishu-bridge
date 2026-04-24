@@ -223,6 +223,43 @@ pm2 stop feishu-bridge
 
 ---
 
+### ⚠️ 安全注意事项
+
+本项目是**本地桥接服务**，连接你的飞书和本地 Cola。在使用前请了解以下潜在风险：
+
+**🔒 凭证安全**
+- `.env` 文件包含你的飞书 App Secret，**绝对不要提交到 git 或分享给任何人**
+- 项目已配置 `.gitignore` 保护 `.env`，但请自行确认生效
+- 建议将 `.env` 文件权限设置为 `chmod 600 .env`（仅本人可读）
+
+**👤 访问控制**
+- 默认情况下，**任何能找到你飞书机器人的用户都可以通过它触发 Cola**
+- 强烈建议在 `.env` 中配置用户白名单：
+  ```
+  ALLOWED_OPEN_IDS=ou_你的openid,ou_其他信任用户的openid
+  ```
+- 不在白名单中的用户发消息会被拒绝
+- 如果不配置，所有用户均可使用（不推荐在公开环境中这样做）
+- 获取 open_id：给机器人发条消息，服务日志中会打印发送者的 open_id
+
+**💻 本地权限**
+- Cola 拥有操作本地文件系统、执行代码等能力。通过飞书触发 Cola 等同于授予远程操作权限
+- 请确保只有你信任的人能与机器人对话（见上方白名单配置）
+
+**📁 文件安全**
+- 桥接服务只允许读取 Cola 输出目录和临时图片目录内的文件
+- `chat_history/` 目录保存对话历史，包含你与 Cola 的所有对话内容，请注意保护
+
+**🔄 依赖安全**
+- 请定期运行 `npm audit` 检查依赖漏洞
+- 运行 `npm audit fix` 可自动修复已知漏洞
+
+**🌐 网络**
+- 桥接服务通过飞书 SDK 的长连接与飞书服务器通信，不需要公网 IP
+- Cola 的 WebSocket 连接仅限本地 `127.0.0.1`，不暴露到外网
+
+---
+
 ### 反馈与问题
 
 遇到问题？欢迎提 issue：
@@ -414,6 +451,43 @@ Proactively send messages to yourself:
 ./feishu-push.sh "Alert: server CPU at 95%"
 ./feishu-push.sh "message content" "ou_xxxxxxxxxxxxxxx"
 ```
+
+---
+
+### ⚠️ Security Notes
+
+This is a **local bridge service** connecting your Feishu and local Cola. Please understand the following risks before use:
+
+**🔒 Credentials**
+- `.env` contains your Feishu App Secret — **never commit it to git or share it**
+- `.gitignore` is configured to protect `.env`, but please verify it works
+- Recommended: `chmod 600 .env` (owner read-only)
+
+**👤 Access Control**
+- By default, **anyone who can find your Feishu bot can trigger your local Cola**
+- Strongly recommend configuring a user whitelist in `.env`:
+  ```
+  ALLOWED_OPEN_IDS=ou_your_openid,ou_another_trusted_user
+  ```
+- Users not on the whitelist will be rejected
+- Without a whitelist, all users can interact (not recommended in shared environments)
+- To find your open_id: send a message to the bot and check the server logs
+
+**💻 Local Permissions**
+- Cola can read/write local files and execute code. Triggering Cola via Feishu is equivalent to granting remote access
+- Ensure only trusted users can chat with the bot (see whitelist above)
+
+**📁 File Safety**
+- The bridge only allows reading files from Cola's output directory and temp image directory
+- `chat_history/` contains all your conversation data — keep it protected
+
+**🔄 Dependencies**
+- Run `npm audit` regularly to check for known vulnerabilities
+- Run `npm audit fix` to auto-fix
+
+**🌐 Network**
+- The bridge communicates with Feishu via SDK persistent connection — no public IP needed
+- Cola's WebSocket is local-only (`127.0.0.1`), not exposed to the internet
 
 ---
 
