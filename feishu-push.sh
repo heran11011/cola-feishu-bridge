@@ -30,5 +30,8 @@ if [ -z "$OPEN_ID" ]; then
   exit 1
 fi
 
-echo "{\"openId\": \"${OPEN_ID}\", \"text\": \"${TEXT}\"}" > "${SCRIPT_DIR}/push-api.json"
+node -e "
+  var j = JSON.stringify({ openId: process.argv[1], text: process.argv[2] });
+  require('fs').writeFileSync(process.argv[3], j);
+" "$OPEN_ID" "$TEXT" "${SCRIPT_DIR}/push-api.json"
 echo "✅ 推送请求已写入，桥接服务将在 2 秒内发送..."

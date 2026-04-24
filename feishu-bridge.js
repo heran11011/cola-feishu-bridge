@@ -117,7 +117,12 @@ const CRED_SOURCE = larkCliConfig ? 'lark-cli 复用' : '.env 文件';
 const FEISHU_APP_ID =
   (larkCliConfig && larkCliConfig.appId) ||
   process.env.FEISHU_APP_ID ||
-  'cli_a958938a8b79dbd4';
+  '';
+
+if (!FEISHU_APP_ID) {
+  console.error('❌ FEISHU_APP_ID 未配置！请在 .env 文件中设置，或先配置 lark-cli（运行 lark-cli config set）。');
+  process.exit(1);
+}
 
 const FEISHU_APP_SECRET =
   (larkCliConfig && larkCliConfig.appSecret) ||
@@ -130,6 +135,12 @@ const COLA_GATEWAY_TOKEN = process.env.COLA_GATEWAY_TOKEN ||
     const tokenPath = path.join(os.homedir(), '.cola', 'gateway-token');
     return fs.existsSync(tokenPath) ? fs.readFileSync(tokenPath, 'utf8').trim() : '';
   })();
+
+// 用户白名单
+const ALLOWED_OPEN_IDS = (process.env.ALLOWED_OPEN_IDS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
 // lark-cli 版本和权限（启动时检测一次）
 const LARK_CLI_VERSION = tryGetLarkCliVersion();
@@ -153,6 +164,9 @@ if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR, { recursive: true });
 const MAX_HISTORY_PER_USER = 50; // 每用户保留最近50条
 
 function getHistoryPath(senderId) {
+  if (!/^ou_[a-f0-9]+$/.test(senderId)) {
+    throw new Error(`Invalid senderId format: ${senderId}`);
+  }
   return path.join(HISTORY_DIR, `${senderId}.json`);
 }
 
@@ -307,6 +321,13 @@ function isNewMessage(msgId) {
 
 // 扫描 outputs 目录中在指定时间之后创建的图片/音频文件
 const OUTPUTS_DIR = path.join(os.homedir(), '.cola', 'outputs');
+
+// 文件路径安全校验：只允许 OUTPUTS_DIR 或 IMG_TMP_DIR 下的文件
+function isAllowedFilePath(filePath) {
+  const resolved = path.resolve(filePath);
+  return resolved.startsWith(OUTPUTS_DIR + path.sep) || resolved.startsWith(IMG_TMP_DIR + path.sep)
+    || resolved === OUTPUTS_DIR || resolved === IMG_TMP_DIR;
+}
 const MEDIA_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.pdf']);
 
 function scanNewMediaFiles(sinceMs) {
@@ -375,7 +396,7 @@ function callColaAgent(userMessage, sessionKey, attachments) {
       // 捕获 desktop:file 事件（send_file 产生的）
       if (data.type === 'event' && data.event === 'desktop:file') {
         const filePath = data.data?.path || data.data?.filePath;
-        if (filePath) {
+        if (filePath && isAllowedFilePath(filePath)) {
           console.log(`[cola:file] Captured file event: ${filePath}`);
           collectedFiles.push(filePath);
         }
@@ -387,7 +408,7 @@ function callColaAgent(userMessage, sessionKey, attachments) {
         const fileRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp|mp3|wav|ogg|m4a|mp4|pdf))/gi;
         const matches = raw.match(fileRegex) || [];
         for (const m of matches) {
-          if (!collectedFiles.includes(m) && fs.existsSync(m)) {
+          if (!collectedFiles.includes(m) && isAllowedFilePath(m) && fs.existsSync(m)) {
             console.log(`[cola:file] Captured file from event data: ${m}`);
             collectedFiles.push(m);
           }
@@ -403,7 +424,7 @@ function callColaAgent(userMessage, sessionKey, attachments) {
         const textFileRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp|mp3|wav|ogg|m4a|mp4|pdf))/gi;
         const textMatches = text.match(textFileRegex) || [];
         for (const m of textMatches) {
-          if (!collectedFiles.includes(m) && fs.existsSync(m)) {
+          if (!collectedFiles.includes(m) && isAllowedFilePath(m) && fs.existsSync(m)) {
             collectedFiles.push(m);
           }
         }
@@ -668,7 +689,11 @@ function startPushWatcher() {
       fs.unlinkSync(PUSH_FILE);
       const req = JSON.parse(raw);
       if (req.openId && req.text) {
-        sendTextToUser(req.openId, req.text);
+        if (ALLOWED_OPEN_IDS.length > 0 && !ALLOWED_OPEN_IDS.includes(req.openId)) {
+          console.log(`[push] Rejected push to ${req.openId}: not in whitelist`);
+        } else {
+          sendTextToUser(req.openId, req.text);
+        }
       }
     } catch (e) {
       console.error('[push] Watch error:', e.message);
@@ -706,6 +731,13 @@ eventDispatcher.register({
       // 只处理单聊
       if (chatType !== 'p2p') {
         console.log(`[event] Non-P2P (${chatType}), skip`);
+        return;
+      }
+
+      // 白名单校验
+      if (ALLOWED_OPEN_IDS.length > 0 && !ALLOWED_OPEN_IDS.includes(senderId)) {
+        console.log(`[event] User ${senderId} not in whitelist, reject`);
+        await replyText(msgId, '⚠️ 暂无权限使用此机器人');
         return;
       }
 
@@ -898,7 +930,7 @@ eventDispatcher.register({
       // 合并媒体文件来源：1) 从事件流收集的文件 2) 从回复文本里正则匹配的路径
       const mediaPathRegex = /(\/[\w\-\.\/]+\.(?:png|jpg|jpeg|gif|webp|mp3|wav|ogg|m4a|mp4|pdf))/gi;
       const mediaMatches = cleanReply.match(mediaPathRegex) || [];
-      const textMediaPaths = mediaMatches.filter(p => fs.existsSync(p));
+      const textMediaPaths = mediaMatches.filter(p => isAllowedFilePath(p) && fs.existsSync(p));
 
       // 合并去重
       const allMediaPaths = [...eventFiles];
@@ -967,6 +999,22 @@ eventDispatcher.register({
         }
       }
 
+      // ── 清理超过1小时的临时文件 ──
+      try {
+        const now = Date.now();
+        const ONE_HOUR = 60 * 60 * 1000;
+        for (const f of fs.readdirSync(IMG_TMP_DIR)) {
+          const fp = path.join(IMG_TMP_DIR, f);
+          try {
+            const stat = fs.statSync(fp);
+            if (stat.isFile() && (now - stat.mtimeMs) > ONE_HOUR) {
+              fs.unlinkSync(fp);
+              console.log(`[cleanup] Removed old tmp file: ${f}`);
+            }
+          } catch {}
+        }
+      } catch {}
+
       // ── Issue 引导：错误回复后追加提示 ──
       if (shouldSendIssueHint(senderId, reply)) {
         try {
@@ -983,7 +1031,7 @@ eventDispatcher.register({
       try {
         const msgId = data?.message?.message_id;
         if (msgId) {
-          await replyText(msgId, `⚠️ 出了点问题：${err.message}`);
+          await replyText(msgId, '⚠️ 出了点问题，请稍后重试');
         }
       } catch (e2) {
         console.error('[feishu] Failed to send error:', e2.message);
@@ -1028,6 +1076,13 @@ function buildStartBanner() {
 
   // Cola Token
   lines.push(`  Cola Token: ${COLA_GATEWAY_TOKEN ? '✓ 已配置' : '✗ 未找到'}`);
+
+  // 白名单状态
+  if (ALLOWED_OPEN_IDS.length > 0) {
+    lines.push(`  白名单:     ✓ 已启用（${ALLOWED_OPEN_IDS.length} 个用户）`);
+  } else {
+    lines.push(`  白名单:     — 未设置（所有用户可用）`);
+  }
 
   lines.push('');
 

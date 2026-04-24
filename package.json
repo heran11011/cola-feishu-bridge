@@ -21,6 +21,9 @@
     "bridge",
     "ai"
   ],
+  "overrides": {
+    "axios": ">=1.15.0"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

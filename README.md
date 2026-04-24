@@ -1,3 +1,10 @@
+> ⚠️ **Disclaimer / 免责声明**
+> 
+> This is a community project, NOT officially maintained by the Cola team.
+> Use at your own risk. The author is not responsible for any data loss or security issues.
+> 
+> 本项目为社区作品，**非 Cola 官方提供或维护**。使用风险自负，作者不对任何数据丢失或安全问题承担责任。
+
 # Cola Feishu Bridge — 飞书桥接
 
 > v1.1.0
