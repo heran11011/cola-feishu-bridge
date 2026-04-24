@@ -243,6 +243,19 @@ function markWelcomed(openId) {
 
 const WELCOME_MESSAGE = `👋 连接成功！我是你的 Cola 助手。
 
+⚠️ 安全提醒（请务必阅读）：
+• 本插件为非官方社区项目，与 Cola / 飞书官方无关
+• Cola 拥有本地文件读写和代码执行能力，通过本插件触发等同于授予远程操作权限
+• 强烈建议仅在个人飞书账号上使用，不要在公司企业中创建应用
+• 请确保已配置用户白名单（ALLOWED_OPEN_IDS），避免他人触发你的 Cola
+• 官方互联方式预计 5.1 后上线，届时建议迁移
+
+如需卸载：
+1. 停止服务（关掉终端 或 pm2 stop feishu-bridge）
+2. 删除本地文件（rm -rf ~/.cola/skills/cola-feishu-bridge）
+3. 到飞书开放平台（open.feishu.cn）→ 停用并删除应用
+前两步也可以直接让 Cola 帮你完成。
+
 你可以直接在这里跟我聊天，我能帮你：
 • 搜文档、查日程、管任务
 • 读群消息摘要
@@ -1116,6 +1129,24 @@ function buildStartBanner() {
 
   lines.push('');
   lines.push('  支持:       文本 / 图片 / 富文本 / 主动推送');
+  lines.push('');
+  lines.push('  ╔══════════════════════════════════════════════════════════════╗');
+  lines.push('  ║  ⚠️  安全警告                                                ║');
+  lines.push('  ║                                                              ║');
+  lines.push('  ║  本项目为非官方社区作品，与 Cola / 飞书无官方关联。           ║');
+  lines.push('  ║  Cola 拥有本地文件读写和代码执行能力，通过飞书触发            ║');
+  lines.push('  ║  等同于授予远程操作权限。                                    ║');
+  lines.push('  ║                                                              ║');
+  lines.push('  ║  🔒 强烈建议：                                               ║');
+  lines.push('  ║  1. 仅在个人飞书账号上使用，不要在公司企业中创建应用         ║');
+  lines.push('  ║  2. 配置 ALLOWED_OPEN_IDS 白名单，限制可访问用户             ║');
+  lines.push('  ║  3. 应用发布时选择「仅自己可用」                             ║');
+  lines.push('  ║                                                              ║');
+  lines.push('  ║  卸载方法：                                                  ║');
+  lines.push('  ║  1. 停止本服务（关掉终端 或 pm2 stop feishu-bridge）         ║');
+  lines.push('  ║  2. 删除本地文件：rm -rf ~/.cola/skills/cola-feishu-bridge   ║');
+  lines.push('  ║  3. 飞书开放平台 → 应用管理 → 停用并删除应用                ║');
+  lines.push('  ╚══════════════════════════════════════════════════════════════╝');
   lines.push('');
   lines.push('  正在连接飞书服务器...');
   lines.push('');
