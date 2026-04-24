@@ -3,7 +3,7 @@
  * feishu-bridge.js (长连接版 v4)
  * 飞书机器人 ↔ Cola AI 桥接服务
  *
- * 功能：文本消息 + 图片识别 + 富文本回复 + lark-cli 凭证复用 + 权限检测 + 首次提示
+ * 功能：文本消息 + 图片识别 + 富文本回复 + lark-cli 凭证复用 + 权限检测 + 首次欢迎 + Issue 引导
  * 启动: node feishu-bridge.js
  */
 
@@ -192,6 +192,100 @@ function isFirstConversation(senderId) {
   const userMessages = history.filter(h => h.role === 'user');
   return userMessages.length === 0;
 }
+
+// ─── Welcome Users (首次欢迎) ─────────────────────────────────────────────────
+
+const WELCOMED_USERS_PATH = path.join(__dirname, 'welcomed-users.json');
+
+function loadWelcomedUsers() {
+  try {
+    if (fs.existsSync(WELCOMED_USERS_PATH)) {
+      return JSON.parse(fs.readFileSync(WELCOMED_USERS_PATH, 'utf8'));
+    }
+  } catch (err) {
+    console.error('[welcome] Failed to load welcomed-users.json:', err.message);
+  }
+  return {};
+}
+
+function saveWelcomedUsers(data) {
+  try {
+    fs.writeFileSync(WELCOMED_USERS_PATH, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('[welcome] Failed to save welcomed-users.json:', err.message);
+  }
+}
+
+function isFirstWelcome(openId) {
+  const users = loadWelcomedUsers();
+  return !users[openId];
+}
+
+function markWelcomed(openId) {
+  const users = loadWelcomedUsers();
+  users[openId] = { welcomedAt: new Date().toISOString() };
+  saveWelcomedUsers(users);
+}
+
+const WELCOME_MESSAGE = `👋 连接成功！我是你的 Cola 助手。
+
+你可以直接在这里跟我聊天，我能帮你：
+• 搜文档、查日程、管任务
+• 读群消息摘要
+• 任何你跟 Cola 聊的事
+
+有问题随时找我～`;
+
+// ─── Issue 引导 (错误回复追加提示) ────────────────────────────────────────────
+
+const ERROR_KEYWORDS = ['报错', '失败', '不支持', '暂不支持', '无法', '出错', 'error', 'failed', 'not supported', 'unsupported', 'unable'];
+const ISSUE_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 小时
+const ISSUE_COOLDOWN_PATH = path.join(__dirname, 'issue-cooldown.json');
+
+function loadIssueCooldown() {
+  try {
+    if (fs.existsSync(ISSUE_COOLDOWN_PATH)) {
+      return JSON.parse(fs.readFileSync(ISSUE_COOLDOWN_PATH, 'utf8'));
+    }
+  } catch (err) {
+    console.error('[issue] Failed to load issue-cooldown.json:', err.message);
+  }
+  return {};
+}
+
+function saveIssueCooldown(data) {
+  try {
+    fs.writeFileSync(ISSUE_COOLDOWN_PATH, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('[issue] Failed to save issue-cooldown.json:', err.message);
+  }
+}
+
+/**
+ * 检查回复文本是否包含错误关键词，且该用户未在冷却期内
+ * 返回 true 表示应该追加 issue 引导
+ */
+function shouldSendIssueHint(openId, replyText) {
+  if (!replyText) return false;
+  const lower = replyText.toLowerCase();
+  const hasError = ERROR_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()));
+  if (!hasError) return false;
+
+  const cooldown = loadIssueCooldown();
+  const lastSent = cooldown[openId];
+  if (lastSent && (Date.now() - new Date(lastSent).getTime()) < ISSUE_COOLDOWN_MS) {
+    return false;
+  }
+  return true;
+}
+
+function markIssueSent(openId) {
+  const cooldown = loadIssueCooldown();
+  cooldown[openId] = new Date().toISOString();
+  saveIssueCooldown(cooldown);
+}
+
+const ISSUE_HINT_MESSAGE = `💡 如果这个功能对你很重要，要不要帮你给这个 Skill 的作者提个 issue？期待他的更新 👉 https://github.com/heran11011/cola-feishu-bridge/issues/new`;
 
 // ─── Dedup cache ─────────────────────────────────────────────────────────────
 
@@ -624,6 +718,17 @@ eventDispatcher.register({
       // 首次对话标记：在处理消息前记录（此时历史中的 user 条目为 0）
       const firstConversation = isFirstConversation(senderId);
 
+      // ── 首次欢迎消息 ──
+      if (isFirstWelcome(senderId)) {
+        try {
+          await replyText(msgId, WELCOME_MESSAGE);
+          markWelcomed(senderId);
+          console.log(`[welcome] Sent welcome message to ${senderId}`);
+        } catch (welcomeErr) {
+          console.error(`[welcome] Failed to send welcome: ${welcomeErr.message}`);
+        }
+      }
+
       // ── 处理文本消息 ──
       if (msgType === 'text') {
         try {
@@ -859,6 +964,17 @@ eventDispatcher.register({
           }
         } catch (fileErr) {
           console.error(`[feishu] File reply failed: ${fileErr.message}`);
+        }
+      }
+
+      // ── Issue 引导：错误回复后追加提示 ──
+      if (shouldSendIssueHint(senderId, reply)) {
+        try {
+          await replyText(msgId, ISSUE_HINT_MESSAGE);
+          markIssueSent(senderId);
+          console.log(`[issue] Sent issue hint to ${senderId}`);
+        } catch (issueErr) {
+          console.error(`[issue] Failed to send issue hint: ${issueErr.message}`);
         }
       }
 
